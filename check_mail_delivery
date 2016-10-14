@@ -1,0 +1,231 @@
+#!/usr/bin/perl
+use strict;
+use lib "/usr/lib64/nagios/plugins";
+use utils qw(%ERRORS);
+
+
+# die with an error if we're not on Linux
+if ($^O ne 'linux') {
+    print "This plugin only applicable on Linux.\n";
+    exit $ERRORS{'UNKNOWN'};
+}
+
+
+
+###############################################################
+# NAME: 	check_mail_delivery
+# DESCRIPTION:	A Nagios/Icinga plugin that sends an email to a mail server
+#		to check via Pop3 if it has been received afterwards.
+#		Developed and tested for outlook.com, gmx, t-online and gmail
+#		but should work with any other POP3 capable ESP, too.
+#		(see bottom of file for hints)
+#
+# AUTHOR:	Martin Emberger, https://sporch.de/
+#		inspired by https://forum.hetzner.de/thread/20761-von-hotmail-blockiert
+#
+# CO-AUTHORS:	Michael Seevogel, Postfix postmulti support and minor enhancements
+#
+# REQUIRES:	Mail::POP3Client, String::Random
+# USAGE:	./check_mail_delivery profile_name
+#		Adapt %CONFIG and %PROFILES here,
+#		configure Nagios/Icinga accordingly.
+#
+# VERSION:	0.3.2
+#
+# CHANGELOG:    0.1	Useable version
+#               0.2	Change license to CC BY-SA 4.0
+#		0.3	Bugfix for Inbox overflow, deletion of emails via POP3
+#		0.3.1	Added Postfix postmulti support
+#		0.3.2	Additionaly set MAIL FROM: via sendmail command so that return-path will definitely match From: and not the local NRPE user as email sender address.
+#		
+# This script comes with ABSOLUTELY NO WARRANTY.
+# This is free software, and you are welcome to redistribute it
+# under certain conditions. See CC BY-SA 4.0 for details.
+# https://creativecommons.org/licenses/by-sa/4.0/
+#
+###############################################################
+
+
+###############################################################
+# SETTINGS
+###############################################################
+#my %PROFILES = (
+#	gmail	=> [ 'my-dummy-address@gmail.com', 'myPOP3Passw0rd', 'pop.gmail.com' ],
+#	gmx	=> [ 'my-dummy-address@gmx.de', 'myPOP3Passw0rd', 'pop.gmx.net' ],
+#	tonline	=> [ 'my-dummy-address@t-online.de', 'myPOP3Passw0rd', 'securepop.t-online.de' ],
+#	hotmail	=> [ 'my-dummy-address@hotmail.com', 'myPOP3Passw0rd', 'pop-mail.outlook.com' ],
+#	aol	=> [ 'my-dummy-address@aol.de', 'myPOP3Passw0rd', 'pop.aol.com' ],
+#       yahoo   => [ 'my-dummy-address@yahoo.com', 'myPOP3Passw0rd', 'pop.mail.yahoo.com' ],
+#
+#);
+
+
+my %CONFIG;
+$CONFIG{'TESTMAIL_SUBJECT'} = 'Automatische Icinga Test Nachricht';	# unique ID will be appended later on
+$CONFIG{'TESTMAIL_FROM'} = 'a-valid-sender@domain.de';
+$CONFIG{'CHECK_WAITTIME'} = '30';	# recommended >=20 secs (consider Nagios' plugin execution time settings)
+$CONFIG{'OTHER_DEBUG'} = 0;		# print debug information to STDOUT (Nagios/Icinga will see them, too)
+$CONFIG{'OTHER_DELETE_TESTMAIL'} = 1;	# delete the test mail after it was detected (definitely recommended!)
+
+#// END SETTINGS
+
+###############################################################
+# Let's go
+###############################################################
+my %WORK;
+
+get_profile();
+send_test_mail();
+wait_before_check();
+check_remote_server();
+handle_return();
+exit();
+
+
+###
+sub get_profile() {
+	if ($#ARGV < 0) {
+		die error ("Configuration", "no profile provided");
+	}
+
+	my $profile_param = $ARGV[0];
+	debug("Provided profile '$profile_param'");
+	
+	my $postmulti_param = $ARGV[1];
+	debug("Postfix instance '$postmulti_param'");
+
+	if (!$PROFILES{$profile_param}) {
+		die error ("Configuration", "unknown profile provided");
+	}
+	else {
+		debug("Profile OK");
+		$CONFIG{'TESTMAIL_TO'} = $PROFILES{$profile_param}[0];
+		$CONFIG{'POP3_USER'} = $CONFIG{TESTMAIL_TO};
+		$CONFIG{'POP3_PASS'} = $PROFILES{$profile_param}[1];
+		$CONFIG{'POP3_SERVER'} = $PROFILES{$profile_param}[2];
+		$CONFIG{'POSTMULTI_INSTANCE'} = $postmulti_param;
+	}
+}
+
+sub send_test_mail() {
+	debug("Sending mail to $CONFIG{TESTMAIL_TO}");
+
+	use String::Random;
+	$WORK{TMP_ID} = new String::Random->randpattern("CncCccCnnnc");
+	my $tmp_subject = $CONFIG{TESTMAIL_SUBJECT} . " ($WORK{TMP_ID})";
+
+	if ($CONFIG{'POSTMULTI_INSTANCE'})
+	{
+        debug("Using $CONFIG{'POSTMULTI_INSTANCE'} as Postfix Instance\n");
+	open (MAIL, "|postmulti -i $CONFIG{'POSTMULTI_INSTANCE'} -x sendmail -t -f $CONFIG{TESTMAIL_FROM}") or die error('Sendmail', 'did not work');
+	}
+	else
+	{
+        debug("POSTMULTI_INSTANCE is NOT defined, gonna send an email from local/regular sendmail client\n");
+	open (MAIL, "|/usr/sbin/sendmail -t -f $CONFIG{TESTMAIL_FROM}") or die error('Sendmail', 'did not work');
+	}
+	print MAIL "To: $CONFIG{TESTMAIL_TO}\n";
+	print MAIL "From: $CONFIG{TESTMAIL_FROM}\n";
+	print MAIL "Subject: $tmp_subject\n\n";
+	print MAIL "Wenn Du meinst es geht nicht mehr, kommt von irgendwo ein Linux her! :-)";
+	close (MAIL);
+
+	debug("Send succeeded!");
+}
+
+sub wait_before_check() {
+	debug("Waiting $CONFIG{CHECK_WAITTIME} seconds...");
+	sleep ($CONFIG{CHECK_WAITTIME});
+}
+
+sub check_remote_server() {
+	debug("Checking $CONFIG{POP3_SERVER} for our mail with ID $WORK{TMP_ID}");
+	my $mail_was_found = 0;
+	my $mail_id = -1;
+
+	use Mail::POP3Client;
+	use IO::Socket::SSL;
+	my $conn = Mail::POP3Client->new(HOST => $CONFIG{POP3_SERVER}, USESSL => 1, USER => $CONFIG{POP3_USER}, PASSWORD => $CONFIG{POP3_PASS}) or die error("Connect",  "unable to connect");
+	my $numMsg = $conn->Count;
+	debug("Number of messages: " . $numMsg);
+
+	if ($numMsg eq -1) {	# see documention of Mail::POP3Client
+		die error ("Connect", "Invalid credentials");
+	}
+
+	for (my $msgNr = 1; $msgNr <= $numMsg; $msgNr++) {
+		foreach ($conn->Head($msgNr)) {
+			if (/^(Subject):/i) {
+				debug("Message $msgNr: '$_'");
+				if ($_ =~ m/\($WORK{TMP_ID}\)/) {
+					debug("Yeah, we found our message!");
+					$mail_was_found = 1;
+					$mail_id = $msgNr;
+				}
+
+				if (($_ =~ m/$CONFIG{TESTMAIL_SUBJECT}/) && (!($_ =~ m/\($WORK{TMP_ID}\)/)) && ($CONFIG{OTHER_DELETE_TESTMAIL}))  {
+					debug("Found an old test mail, deleting it");
+					$conn->Delete($msgNr);
+				}
+			}
+		}
+	}
+
+	debug("New message count: " . $conn->Count());
+
+	if (($CONFIG{OTHER_DELETE_TESTMAIL}) && ($mail_was_found)) {
+		$conn->Delete($mail_id);
+		debug("Message deleted");
+	}
+
+
+	if ($mail_was_found) {
+		$WORK{'RETURN_MSG'} = "Test Mail $WORK{TMP_ID} was found in $CONFIG{POP3_USER}'s Inbox";
+		$WORK{'RETURN_CODE'} = 0;	# State OK for Nagios/Icinga
+	} else {
+		$WORK{'RETURN_MSG'} = "Did NOT found Test Mail $WORK{TMP_ID} in $CONFIG{POP3_USER}'s Inbox. Maybe you've been blocked or the timeout ($CONFIG{CHECK_WAITTIME}s) is too low.";
+		$WORK{'RETURN_CODE'} = 2;	# State CRITICAL for Nagios/Icinga
+		
+	}
+
+	$conn->Close();
+}
+
+sub handle_return() {
+	print $WORK{RETURN_MSG}, "\n";		# STDOUT
+	exit $WORK{RETURN_CODE};		# corresponding Nagios/Icinga code
+#	exit ($ERRORS{$WORK{RETURN_CODE}});
+
+}
+
+
+sub debug() {
+	my $msg = shift;
+	if ($CONFIG{OTHER_DEBUG}) {
+		print $msg . "\n";
+	}
+}
+
+sub error() {
+	my $source = shift;
+	my $msg = shift;
+
+	print "\n\n" . "ERROR: $source reports \"$msg\"!" . "\n\n";
+	exit 2;
+}
+
+
+
+
+
+###############################################################
+# Hints for setting up email accounts (had to learn by myself)
+# GMAIL
+# Option "Weniger sichere Apps zulassen:" has to be enabled
+# via Kontoeinstellungen
+#
+# T-ONLINE
+# Most stupid ESP ever. You have to set the
+# "Email Passwort", as it's not the same as for web
+###############################################################
+
