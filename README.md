@@ -62,6 +62,7 @@ Maybe you've been blocked or the timeout (30s) is too low.
 <br>
 <br>
 **Additional Notes**
+<br>
 If you are __NOT__ executing this script under a Red Hat/CentOS alike distribution __OR__ you don't have the package "nagios-plugins-all" installed, you may want to comment out the following lines in this script:
 ```
 use lib "/usr/lib64/nagios/plugins";
