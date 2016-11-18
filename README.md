@@ -15,6 +15,14 @@ Comes with presets for the following profiles:
 However, you are free to add additional profiles. You'll just have to extend the profile list under "my %PROFILES" by adding those directly within the script itself. Before you can use this script, you'll also have to configure this script to use your own provider login credentials!
 
 <br>
+**Requirements**
+<br>The following Perl Modules are required to run this script:<br>
+Mail::POP3Client, String::Random
+<br>
+<br>
+See "Additional Notes" for further informations.
+
+<br>
 
 **Usage to check the regular mail deliverability:**
 ```
