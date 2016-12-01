@@ -3,7 +3,7 @@ A Nagios/Icinga plugin that sends an email to a mail server to check via Pop3 if
 Very handy if you want to check if the mails of your server may arrive the Inbox of the major mailproviders (or actually any other provider)!
 <br>
 <br>
-Comes with presets for the following profiles:
+Comes with presets for the following providers:
 - Hotmail/Outlook.com
 - Gmail
 - Yahoo
@@ -12,19 +12,19 @@ Comes with presets for the following profiles:
 <br>
 <br>
 
-However, you are free to add additional profiles. You'll just have to extend the profile list under "my %PROFILES" by adding those directly within the script itself. Before you can use this script, you'll also have to configure this script to use your own provider login credentials!
+However, you are free to add additional providers. You'll just have to extend the profile list under "my %PROFILES" by adding those directly within the script itself. Before you can use this script, you'll also have to configure this script to use your own provider login credentials!
 
 <br>
-**Requirements**
+##Requirements
 <br>The following Perl Modules are required to run this script:<br>
-Mail::POP3Client, String::Random
+[Mail::POP3Client][1], [String::Random][2]
 <br>
 <br>
 See "Additional Notes" for further informations.
 
 <br>
 
-**Usage to check the regular mail deliverability:**
+###Usage to check the regular mail deliverability:
 ```
 check_mail_delivery_hosters <provider>
 ```
@@ -37,7 +37,7 @@ Test Mail O9cOfgQ295f was found in test.john.doe@outlook.com's Inbox
 <br>
 <br>
 
-**Usage to check the mail deliverability from Postmulti Instances:**
+###Usage to check the mail deliverability from Postmulti Instances:
 ```
 check_mail_delivery <provider> <postmulti_instance>
 ```
@@ -69,7 +69,7 @@ Maybe you've been blocked or the timeout (30s) is too low.
 <br>
 <br>
 <br>
-**Additional Notes**
+##Additional Notes
 <br>
 If you are __NOT__ executing this script under a Red Hat/CentOS alike distribution __OR__ you don't have the package "nagios-plugins-all" installed, you may want to comment out the following lines in this script:
 ```
@@ -87,4 +87,5 @@ if ($^O ne 'linux') {
 
 These lines are not elemental to run this script under Linux Distributions!
 
-
+[1]: http://search.cpan.org/dist/Mail-POP3Client
+[2]: http://search.cpan.org/dist/String-Random
